@@ -20,10 +20,6 @@ export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
 ##for array jobs, use $SLURM_ARRAY_TASK_ID, and submit as "sbatch --array=0-31, --array=1,4,10..."
 tid=$SLURM_ARRAY_TASK_ID
 
-# label
-# in my case, not necessary/used as I do not have a common label for all of the files.
-# LABEL=16S
-
 # the delimiter I will use to awk for the basename
 FOR=_S
 
@@ -31,9 +27,6 @@ work_dir=path/to/your/working/directory
 
 mkdir -p ${work_dir%}
 cd ${work_dir%}
-
-#working directory. 現在のディレクトリで計算を行う
-#cd $PWD
 
 dir=path/to/your/fastq/files
 
@@ -44,6 +37,7 @@ qv=10
 ## output prefix
 out="12S"
 
+# make an output directory for cutadapt
 mkdir ${work_dir}/cutadapt_out
 
 ####################################################################### Start of the pipeline  #################################################################################################################
@@ -65,41 +59,31 @@ R2=`ls ${dir} |grep $id |grep R2`
 ## Cutadapt (order matters, will follow the cutadapt documentation)
 ## (P5 flowcell adapter)-(IDX)-(overhang adapter for 2nd PCR)-(MiFish primer)
 
-## Are the adapter even still there in my case? Maybe they were removed in the post-processing by MiSeq???
-## --> yes, flowcell adapter,  idx and overhang sequences are indeed removed and absent in the fastq files.
-## just the NNNNNN+(Primer sequences) are present. --> should trim off 6 bases from the beginning then the primers
-
 ## Quality trimming is done before any adapter trimming.
 ## Adapter trimming itself does not appear in that list and is done after quality trimming and before length trimming (--length/-l).
 
-## so its:
-# 1-4: processsing
-## 1. -u length (+) from the beginning, (-) from the end
-## 2. -q quality cut off
-## 3. -a -g -b adapter/primer
-## 4. -l length (+) from the end, (-) from the beginning (why not keep it consistent as the 1. step length -u? confusing.)
-# 5-? filtering of processed reads: too short or untrimmed reads
-## 5. -m discard reads shorter than this -M discard reads longer than this
-## 6. --max-n discard reads with count of N (ambiguous base) greater than the given value. --> set to 0 to remove reads with N>0.
+## explaining cutadapt arguments:
+## Processing
+#### 1. -u length (+) from the beginning, (-) from the end
+#### 2. -q quality cut off
+#### 3. -a -g -b adapter/primer
+#### 4. -l length (+) from the end, (-) from the beginning
+## Filtering of processed reads: too short or untrimmed reads
+#### 5. -m discard reads shorter than this -M discard reads longer than this
+#### 6. --max-n discard reads with count of N (ambiguous base) greater than the given value. --> set to 0 to remove reads with N>0.
 
 ## 1. Filters out sequences with ambiguous (N) bases (DADA2 requires this)
 ## 2. Removes primers and adapter sequences, as well as filter out qv< values.
-# cutadapt --cores ${OMP_NUM_THREADS} --minimum-length 200 -b AGATCGGAAGAGCACACGTCTGAACTCCAGTCA -B AGATCGGAAGAGCGTCGTGTAGGGAAAGAGTGT -q ${qv},${qv} -o ${id}_trimmed_R1.fq -p ${id}_trimmed_R2.fq ${dir}/${R1} ${dir}/${R2}
 
 # Processing (remove 6 bases form beginning, quality cutoff at 10 from 3 and 5-prime ends, remove the primers, length trim from end for the reverse reads?)
-# Multiple primers -g:5prime -a:3prime -GA:reverse
-#cutadapt --cores ${OMP_NUM_THREADS} -u 6 -q ${qv},${qv} -g GTCGGTAAAACTCGTGCCAGC -g GCCGGTAAAACTCGTGCCAGC -g RGTTGGTAAATCTCGTGCCAGC -a CAAACTGGGATTAGATACCCCACTATG -a CAAACGGGGATTAGACACCCTCCTATG -a CAAACTAGGATTAGATACCCCACTATGC -G CATAGTGGGGTATCTAATCCCAGTTTG -G CATAGGAGGGTGTCTAATCCCCGTTTG -G GCATAGTGGGGTATCTAATCCTAGTTTG -A GCTGGCACGAGTTTTACCGAC -A GCTGGCACGAGTTTTACCGGC -A GCTGGCACGAGATTTACCAACY -n 2 -o ${id}_trimmed_R1.fq -p ${id}_trimmed_R2.fq ${dir}/${R1} ${dir}/${R2}
 
-# combined processing and filtering
+# command for processing and filtering
 cutadapt --cores ${OMP_NUM_THREADS} -u 6 -q ${qv},${qv} -g GTCGGTAAAACTCGTGCCAGC -g GCCGGTAAAACTCGTGCCAGC -g RGTTGGTAAATCTCGTGCCAGC -a CAAACTGGGATTAGATACCCCACTATG -a CAAACGGGGATTAGACACCCTCCTATG -a CAAACTAGGATTAGATACCCCACTATGC -G CATAGTGGGGTATCTAATCCCAGTTTG -G CATAGGAGGGTGTCTAATCCCCGTTTG -G GCATAGTGGGGTATCTAATCCTAGTTTG -A GCTGGCACGAGTTTTACCGAC -A GCTGGCACGAGTTTTACCGGC -A GCTGGCACGAGATTTACCAACY -n 2 -m 50 --max-n 0 -o ${work_dir}/cutadapt_out/${id}_trimmed_R1.fastq -p ${work_dir}/cutadapt_out/${id}_trimmed_R2.fastq ${dir}/${R1} ${dir}/${R2}
 
 echo OK1-Cutadapt-Processing
 
-# Filtering of processed reads
-#cutadapt --cores ${OMP_NUM_THREADS} -m 50 --max-n 0
-#echo OK2-Cutadapt-Filtering
-
 # append the the number of reads before and after the cutadapt to the sanity check file
+
 # input fastq files:
 # R1
 # R2
@@ -122,7 +106,16 @@ done
 export PATH="/apps/unit/RavasiU/ayse/R-4.2.1/bin:$PATH"
 export PATH="/home/a/ayse-oshima/R/x86_64-redhat-linux-gnu-library/4.1:$PATH"
 
+# call/source the R script
 /apps/unit/RavasiU/ayse/R-4.2.1/bin/Rscript --vanilla dada2.R
+
+# output files from dada2 will be in: /flash/RavasiU/Ayse/eDNA_workspace/dada2_out
+# the files used for downstream steps are:
+## asv_map
+## asv_table.fasta
+## asv_table_mapped.tab
+## filtering_results.csv
+## seqtab_nochim.csv
 
 # 3. Preparing the BLAST database from the MitoFish fasta file with makeblastdb #######################################################################################################################
 
@@ -132,7 +125,7 @@ mkdir -p ${blast_dir%}
 
 # make sure taxdb files downloaded from 
 # https://ftp.ncbi.nlm.nih.gov/blast/db/
-# are in the blast output directory
+# and are in the blast output directory
 # I have it in my personal directory from which I copy paste each time.
 # wget would work too? but upon updates, the link may not work anymore.
 
@@ -180,7 +173,8 @@ makeblastdb -in cleaned_complete_partial_mitogenomes.fa -parse_seqids -blastdb_v
 
 # 4. BLAST of ASV's from ASV table against the MitoFish db with blastn ######################################################################################################################################
 
-perc_id=$SLURM_ARRAY_TASK_ID
+# set the percent id parameter for blast
+perc_id=97
 
 # output files from dada2 are in: /flash/RavasiU/Ayse/eDNA_workspace/dada2_out
 # the files used for downstream steps are:
