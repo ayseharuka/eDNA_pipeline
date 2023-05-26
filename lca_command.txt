@@ -1,0 +1,2 @@
+# run this in the same directory as the eDNAFlow.nf script
+nextflow run eDNAFlow.nf --taxonomyAssignment --zotuTable "path/to/asv/table/generated/by/dada2/script" --blastFile "path/to/blast/output/file" --lca_output "apogama_97"
